@@ -91,3 +91,45 @@ async def test_run_gemini_handles_invalid_json():
     with patch("gemini_mcp.gemini.asyncio.create_subprocess_exec", return_value=proc):
         result = await run_gemini(prompt="bad json")
         assert result == "not json at all"
+
+
+@pytest.mark.asyncio
+async def test_run_gemini_fallback_chain():
+    """First model fails, second succeeds."""
+    fail_proc = AsyncMock()
+    fail_proc.returncode = 1
+    fail_proc.communicate = AsyncMock(return_value=(b"", b"model not found"))
+
+    ok_proc = AsyncMock()
+    ok_proc.returncode = 0
+    ok_json = json.dumps({"session_id": "x", "response": "fallback worked", "stats": {}})
+    ok_proc.communicate = AsyncMock(return_value=(ok_json.encode(), b""))
+
+    with patch(
+        "gemini_mcp.gemini.asyncio.create_subprocess_exec",
+        side_effect=[fail_proc, ok_proc],
+    ) as mock_exec:
+        result = await run_gemini(
+            prompt="hi",
+            models=["bad-model", "good-model"],
+        )
+        assert result == "fallback worked"
+        assert mock_exec.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_run_gemini_fallback_all_fail():
+    """All models fail, returns last error."""
+    fail_proc = AsyncMock()
+    fail_proc.returncode = 1
+    fail_proc.communicate = AsyncMock(return_value=(b"", b"model unavailable"))
+
+    with patch(
+        "gemini_mcp.gemini.asyncio.create_subprocess_exec",
+        return_value=fail_proc,
+    ):
+        result = await run_gemini(
+            prompt="hi",
+            models=["bad1", "bad2"],
+        )
+        assert "Error" in result

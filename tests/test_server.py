@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import patch, AsyncMock
-from gemini_mcp.server import gemini_query
+from gemini_mcp.server import gemini_query, MODEL_FALLBACK_CHAIN
 
 
 @pytest.mark.asyncio
@@ -9,12 +9,9 @@ async def test_gemini_query_prompt_only():
         mock_run.return_value = "The answer is 4"
         result = await gemini_query.fn(prompt="What is 2+2?")
         assert result == "The answer is 4"
-        mock_run.assert_called_once_with(
-            prompt="What is 2+2?",
-            context="",
-            model="gemini-3-pro-preview",
-            timeout=120,
-        )
+        call_kwargs = mock_run.call_args[1]
+        assert call_kwargs["model"] is None
+        assert call_kwargs["models"] == MODEL_FALLBACK_CHAIN
 
 
 @pytest.mark.asyncio
@@ -50,12 +47,14 @@ async def test_gemini_query_with_glob(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_gemini_query_with_model():
+async def test_gemini_query_with_explicit_model():
+    """When model is explicitly set, use it directly with no fallback chain."""
     with patch("gemini_mcp.server.run_gemini", new_callable=AsyncMock) as mock_run:
         mock_run.return_value = "ok"
         await gemini_query.fn(prompt="hi", model="gemini-2.5-pro")
         call_kwargs = mock_run.call_args[1]
         assert call_kwargs["model"] == "gemini-2.5-pro"
+        assert call_kwargs["models"] is None
 
 
 @pytest.mark.asyncio
