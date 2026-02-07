@@ -6,7 +6,7 @@ An MCP server that lets Claude Code call Gemini CLI as a tool. Leverages Gemini'
 
 Claude Code sends lightweight instructions (a prompt, file paths, glob patterns). The server resolves files and reads them server-side, then pipes everything to `gemini -p` via stdin. Gemini's response comes back as text to Claude Code.
 
-This means file contents never consume Claude's context window — only Gemini's.
+This means file contents never consume Claude's context window — only Gemini's (up to 1M+ tokens).
 
 ## Requirements
 
@@ -19,8 +19,10 @@ This means file contents never consume Claude's context window — only Gemini's
 Register with Claude Code:
 
 ```bash
-claude mcp add --transport stdio --scope user gemini-mcp uv run --project /path/to/gemini-mcp-server gemini-mcp-server
+claude mcp add gemini --transport stdio --scope user -- uv run --project /path/to/gemini-mcp-server gemini-mcp-server
 ```
+
+Then restart Claude Code (`claude --continue`) to pick up the new server.
 
 ## Usage
 
@@ -35,6 +37,9 @@ Once registered, Claude Code can call the `gemini_query` tool:
 
 # Large codebase analysis
 "Ask Gemini to find inconsistent error handling across src/**/*.ts"
+
+# Use a specific model
+"Ask Gemini using gemini-2.5-flash to summarize this file"
 ```
 
 ### Parameters
@@ -42,14 +47,33 @@ Once registered, Claude Code can call the `gemini_query` tool:
 - `prompt` (string, required) — The instruction or question for Gemini
 - `files` (string[], optional) — Absolute file paths to include as context
 - `glob_patterns` (string[], optional) — Glob patterns resolved server-side
-- `model` (string, optional) — Gemini model to use (e.g., `gemini-2.5-pro`)
+- `model` (string, optional) — Override the model. Skips the fallback chain and uses this model only
 - `timeout` (int, optional) — Max seconds to wait. Default 120
+
+### Model fallback
+
+When no model is specified, the server tries these in order until one succeeds:
+
+1. `gemini-3-pro-preview`
+2. `gemini-3-flash-preview`
+3. `gemini-2.5-pro`
+4. `gemini-2.5-flash`
+
+If you specify a model explicitly (e.g., `model="gemini-2.5-flash"`), it uses that model directly with no fallback.
 
 ### Safety limits
 
-- Max 500 files per query (configurable)
-- Max 10MB total context (configurable)
-- Files are size-checked before reading to prevent OOM
+- Max 500 files per query (configurable via `max_files` in `resolve_files`)
+- Max 10MB total context (configurable via `max_bytes` in `read_files_as_context`)
+- File sizes are checked with `os.path.getsize()` before reading to prevent OOM
+- File paths are displayed as relative paths in context sent to Gemini
+
+### Robustness
+
+- JSON parsing handles CLI warnings and non-JSON output mixed with the response
+- Blocking file I/O is offloaded to threads via `asyncio.to_thread`
+- Subprocess uses `create_subprocess_exec` (no shell injection risk)
+- Timeouts prevent hung Gemini CLI processes
 
 ## Development
 
@@ -57,7 +81,7 @@ Once registered, Claude Code can call the `gemini_query` tool:
 # Install dependencies
 uv sync
 
-# Run tests
+# Run tests (24 tests)
 uv run pytest -v
 
 # Run the server locally
