@@ -16,13 +16,34 @@ This means file contents never consume Claude's context window — only Gemini's
 
 ## Setup
 
-Register with Claude Code:
+1. Install and authenticate the [Gemini CLI](https://github.com/google-gemini/gemini-cli):
+
+```bash
+npm install -g @google/gemini-cli
+gemini  # follow the auth prompts
+```
+
+2. Clone this repo:
+
+```bash
+git clone https://github.com/stevenc81/gemini-mcp-server.git
+```
+
+3. Verify Gemini CLI works:
+
+```bash
+gemini -p "hello" -o json
+```
+
+4. Register the server with Claude Code:
 
 ```bash
 claude mcp add gemini --transport stdio --scope user -- uv run --project /path/to/gemini-mcp-server gemini-mcp-server
 ```
 
-Then restart Claude Code (`claude --continue`) to pick up the new server.
+Replace `/path/to/gemini-mcp-server` with the absolute path to where you cloned the repo.
+
+You should now be able to ask Claude to use the `gemini_query` tool.
 
 ## Usage
 
