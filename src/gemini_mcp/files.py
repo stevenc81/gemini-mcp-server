@@ -46,13 +46,13 @@ def read_files_as_context(
     included = 0
     for path in file_paths:
         try:
+            file_size = os.path.getsize(path)
+            if total_bytes + file_size > max_bytes:
+                break
             with open(path, "r") as f:
                 content = f.read()
-            file_bytes = len(content.encode("utf-8"))
-            if total_bytes + file_bytes > max_bytes and included > 0:
-                break
             blocks.append(f'<file path="{path}">\n{content}\n</file>')
-            total_bytes += file_bytes
+            total_bytes += file_size
             included += 1
         except (OSError, UnicodeDecodeError):
             blocks.append(f'<file path="{path}" error="could not read file" />')

@@ -81,3 +81,12 @@ def test_read_files_as_context_respects_max_bytes(tmp_path):
     # First file should be included, not all three
     assert 'file0.txt' in context
     assert 'file2.txt' not in context
+
+
+def test_read_files_as_context_skips_oversized_first_file(tmp_path):
+    big = tmp_path / "big.txt"
+    big.write_text("x" * 200)
+    context = read_files_as_context([str(big)], max_bytes=100)
+    assert "big.txt" not in context or 'error=' in context or "Context truncated" in context
+    assert "Context truncated" in context
+    assert "0 of 1 files included" in context
