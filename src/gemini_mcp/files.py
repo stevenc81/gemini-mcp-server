@@ -49,7 +49,7 @@ def read_files_as_context(
             file_size = os.path.getsize(path)
             if total_bytes + file_size > max_bytes:
                 break
-            with open(path, "r") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 content = f.read()
             blocks.append(f'<file path="{path}">\n{content}\n</file>')
             total_bytes += file_size
