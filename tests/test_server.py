@@ -12,7 +12,7 @@ async def test_gemini_query_prompt_only():
         mock_run.assert_called_once_with(
             prompt="What is 2+2?",
             context="",
-            model=None,
+            model="gemini-3-pro-preview",
             timeout=120,
         )
 

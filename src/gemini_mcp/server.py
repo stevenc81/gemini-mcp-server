@@ -13,7 +13,7 @@ async def gemini_query(
     prompt: str,
     files: list[str] | None = None,
     glob_patterns: list[str] | None = None,
-    model: str | None = None,
+    model: str = "gemini-3-pro-preview",
     timeout: int = 120,
 ) -> str:
     """Send a query to Gemini CLI and return its response.
@@ -31,7 +31,7 @@ async def gemini_query(
         prompt: The instruction or question for Gemini.
         files: Optional list of absolute file paths to include as context.
         glob_patterns: Optional glob patterns (e.g., "src/**/*.py") resolved server-side.
-        model: Optional Gemini model (e.g., "gemini-2.5-pro"). Uses Gemini CLI default if not set.
+        model: Gemini model to use. Defaults to "gemini-3-pro-preview".
         timeout: Max seconds to wait for Gemini response. Default 120.
     """
     file_paths = await asyncio.to_thread(resolve_files, files, glob_patterns)
