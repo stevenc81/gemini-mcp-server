@@ -33,6 +33,14 @@ def resolve_files(
     return resolved
 
 
+def _display_path(path: str) -> str:
+    """Convert absolute path to a shorter relative path when possible."""
+    try:
+        return os.path.relpath(path)
+    except ValueError:
+        return path
+
+
 def read_files_as_context(
     file_paths: list[str],
     max_bytes: int = 10_000_000,
@@ -45,17 +53,18 @@ def read_files_as_context(
     total_bytes = 0
     included = 0
     for path in file_paths:
+        display = _display_path(path)
         try:
             file_size = os.path.getsize(path)
             if total_bytes + file_size > max_bytes:
                 break
             with open(path, "r", encoding="utf-8") as f:
                 content = f.read()
-            blocks.append(f'<file path="{path}">\n{content}\n</file>')
+            blocks.append(f'<file path="{display}">\n{content}\n</file>')
             total_bytes += file_size
             included += 1
         except (OSError, UnicodeDecodeError):
-            blocks.append(f'<file path="{path}" error="could not read file" />')
+            blocks.append(f'<file path="{display}" error="could not read file" />')
             included += 1
 
     if included < len(file_paths):

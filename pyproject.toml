@@ -5,7 +5,7 @@ description = "MCP server that delegates tasks to Gemini CLI"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "fastmcp>=2.0.0",
+    "fastmcp>=2.14,<3",
 ]
 
 [project.scripts]
