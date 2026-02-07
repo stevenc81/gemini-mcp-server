@@ -60,3 +60,24 @@ def test_read_files_as_context(tmp_path):
 def test_read_files_as_context_empty():
     context = read_files_as_context([])
     assert context == ""
+
+
+def test_resolve_files_respects_max_files(tmp_path):
+    for i in range(10):
+        (tmp_path / f"file{i}.py").write_text(f"content{i}")
+    result = resolve_files(glob_patterns=[str(tmp_path / "*.py")], max_files=3)
+    assert len(result) == 3
+
+
+def test_read_files_as_context_respects_max_bytes(tmp_path):
+    paths = []
+    for i in range(3):
+        f = tmp_path / f"file{i}.txt"
+        f.write_text("x" * 100)
+        paths.append(str(f))
+    context = read_files_as_context(paths, max_bytes=150)
+    assert "Context truncated" in context
+    assert "byte limit" in context
+    # First file should be included, not all three
+    assert 'file0.txt' in context
+    assert 'file2.txt' not in context
