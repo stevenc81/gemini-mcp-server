@@ -52,4 +52,14 @@ async def run_gemini(
         data = json.loads(stdout_text)
         return data.get("response", stdout_text)
     except json.JSONDecodeError:
+        # Gemini CLI may emit warnings before the JSON object; try to
+        # extract the outermost {...} substring and parse that instead.
+        start = stdout_text.find("{")
+        end = stdout_text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                data = json.loads(stdout_text[start : end + 1])
+                return data.get("response", stdout_text)
+            except json.JSONDecodeError:
+                pass
         return stdout_text

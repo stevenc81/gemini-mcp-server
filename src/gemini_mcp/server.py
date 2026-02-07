@@ -1,3 +1,5 @@
+import asyncio
+
 from fastmcp import FastMCP
 
 from gemini_mcp.files import resolve_files, read_files_as_context
@@ -32,8 +34,8 @@ async def gemini_query(
         model: Optional Gemini model (e.g., "gemini-2.5-pro"). Uses Gemini CLI default if not set.
         timeout: Max seconds to wait for Gemini response. Default 120.
     """
-    file_paths = resolve_files(files=files, glob_patterns=glob_patterns)
-    context = read_files_as_context(file_paths)
+    file_paths = await asyncio.to_thread(resolve_files, files, glob_patterns)
+    context = await asyncio.to_thread(read_files_as_context, file_paths)
 
     return await run_gemini(
         prompt=prompt,

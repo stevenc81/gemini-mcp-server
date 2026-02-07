@@ -62,6 +62,17 @@ async def test_run_gemini_handles_failure():
 
 
 @pytest.mark.asyncio
+async def test_run_gemini_handles_warnings_before_json():
+    proc = AsyncMock()
+    proc.returncode = 0
+    stdout = b'Warning: new version available\n{"session_id":"x","response":"hello","stats":{}}'
+    proc.communicate = AsyncMock(return_value=(stdout, b""))
+    with patch("gemini_mcp.gemini.asyncio.create_subprocess_exec", return_value=proc):
+        result = await run_gemini(prompt="hi")
+        assert result == "hello"
+
+
+@pytest.mark.asyncio
 async def test_run_gemini_handles_invalid_json():
     proc = AsyncMock()
     proc.returncode = 0
