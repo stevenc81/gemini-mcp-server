@@ -1,6 +1,46 @@
 import asyncio
 import json
+import re
 import shutil
+
+# Patterns indicating the model itself is unavailable or doesn't exist.
+# These warrant falling back to the next model.
+_FALLBACK_PATTERNS = [
+    re.compile(r"model.*not found", re.IGNORECASE),
+    re.compile(r"model.*does not exist", re.IGNORECASE),
+    re.compile(r"model.*unavailable", re.IGNORECASE),
+    re.compile(r"(?:^|[\s:])404(?:\s|$)"),
+    re.compile(r"not supported", re.IGNORECASE),
+    re.compile(r"deprecated", re.IGNORECASE),
+]
+
+# Patterns indicating a transient error that could succeed on retry
+# with the same model. Don't fall back for these.
+_RETRIABLE_PATTERNS = [
+    re.compile(r"(?:^|[\s:])429(?:\s|$)"),
+    re.compile(r"rate.?limit", re.IGNORECASE),
+    re.compile(r"quota", re.IGNORECASE),
+    re.compile(r"resource.?exhausted", re.IGNORECASE),
+    re.compile(r"overloaded", re.IGNORECASE),
+    re.compile(r"too many requests", re.IGNORECASE),
+    re.compile(r"(?:^|[\s:])503(?:\s|$)"),
+    re.compile(r"temporarily unavailable", re.IGNORECASE),
+]
+
+_MAX_RETRIES = 2
+_RETRY_DELAY_SECS = 3
+
+
+def _should_fallback(error_msg: str) -> bool:
+    """Return True if the error means this model can't serve the request."""
+    for pat in _RETRIABLE_PATTERNS:
+        if pat.search(error_msg):
+            return False
+    for pat in _FALLBACK_PATTERNS:
+        if pat.search(error_msg):
+            return True
+    # Unknown error — fall back rather than retrying blindly.
+    return True
 
 
 async def _call_gemini(
@@ -54,6 +94,34 @@ async def _call_gemini(
         return True, stdout_text
 
 
+async def _call_with_retries(
+    gemini_path: str,
+    prompt: str,
+    context: str,
+    model: str | None,
+    timeout: int,
+) -> tuple[bool, str]:
+    """Try a model, retrying on transient errors.
+
+    Returns (success, result_text).
+    """
+    last_error = ""
+    for attempt in range(_MAX_RETRIES + 1):
+        success, result = await _call_gemini(gemini_path, prompt, context, model, timeout)
+        if success:
+            return True, result
+        last_error = result
+        if _should_fallback(result):
+            return False, result
+        # Transient error — retry after a delay
+        if attempt < _MAX_RETRIES:
+            await asyncio.sleep(_RETRY_DELAY_SECS)
+
+    # Exhausted retries on a transient error — fall back, but caller
+    # will record that we tried this model.
+    return False, last_error
+
+
 async def run_gemini(
     prompt: str,
     context: str = "",
@@ -63,8 +131,15 @@ async def run_gemini(
 ) -> str:
     """Run Gemini CLI in headless mode and return the response text.
 
-    Tries each model in order until one succeeds. If a single model is
-    provided via `model`, it is used directly with no fallback.
+    Tries each model in order until one succeeds. Transient errors
+    (rate limits, 503s) are retried on the same model before falling
+    back. Permanent errors (404, model not found) fall back immediately.
+
+    When a fallback occurs, the response is prefixed with a warning
+    showing which models failed and why.
+
+    If a single model is provided via `model`, it is used directly with
+    no fallback (but transient errors are still retried).
 
     Args:
         prompt: The instruction/question for Gemini.
@@ -77,7 +152,6 @@ async def run_gemini(
     if not gemini_path:
         return "Error: gemini CLI not found in PATH"
 
-    # Build the list of models to try
     if models:
         to_try = models
     elif model:
@@ -85,11 +159,29 @@ async def run_gemini(
     else:
         to_try = [None]
 
-    last_error = ""
+    failures: list[tuple[str, str]] = []  # (model_name, error_msg)
     for m in to_try:
-        success, result = await _call_gemini(gemini_path, prompt, context, m, timeout)
+        success, result = await _call_with_retries(
+            gemini_path, prompt, context, m, timeout,
+        )
         if success:
+            if failures:
+                warning = _format_fallback_warning(failures, m)
+                return f"{warning}\n\n{result}"
             return result
-        last_error = result
+        failures.append((m or "default", result))
 
-    return last_error
+    return failures[-1][1] if failures else "Error: no models to try"
+
+
+def _format_fallback_warning(
+    failures: list[tuple[str, str]],
+    used_model: str | None,
+) -> str:
+    """Build a warning string describing which models failed."""
+    lines = [f"[WARNING: Fell back to {used_model or 'default'}]"]
+    for model_name, error in failures:
+        # Extract just the error detail, not the full "Error: gemini CLI exited..." prefix.
+        short = error.split(": ", 2)[-1] if ": " in error else error
+        lines.append(f"  - {model_name}: {short}")
+    return "\n".join(lines)

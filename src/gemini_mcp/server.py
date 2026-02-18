@@ -34,8 +34,8 @@ async def gemini_query(
     File contents are loaded server-side and piped to Gemini via stdin,
     so they don't consume Claude's context window.
 
-    Defaults to gemini-3-pro-preview, falling back to gemini-2.5-pro then
-    gemini-2.5-flash if a model is unavailable.
+    Defaults to gemini-3-pro-preview, falling back to gemini-3-flash-preview,
+    gemini-2.5-pro, then gemini-2.5-flash if a model is unavailable.
 
     Args:
         prompt: The instruction or question for Gemini.

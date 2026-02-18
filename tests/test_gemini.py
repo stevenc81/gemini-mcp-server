@@ -1,7 +1,7 @@
 import json
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
-from gemini_mcp.gemini import run_gemini
+from gemini_mcp.gemini import run_gemini, _should_fallback
 
 
 @pytest.fixture
@@ -95,7 +95,7 @@ async def test_run_gemini_handles_invalid_json():
 
 @pytest.mark.asyncio
 async def test_run_gemini_fallback_chain():
-    """First model fails, second succeeds."""
+    """First model fails, second succeeds — response includes warning."""
     fail_proc = AsyncMock()
     fail_proc.returncode = 1
     fail_proc.communicate = AsyncMock(return_value=(b"", b"model not found"))
@@ -113,8 +113,30 @@ async def test_run_gemini_fallback_chain():
             prompt="hi",
             models=["bad-model", "good-model"],
         )
-        assert result == "fallback worked"
+        assert "fallback worked" in result
+        assert "[WARNING: Fell back to good-model]" in result
+        assert "bad-model" in result
         assert mock_exec.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_run_gemini_no_warning_when_first_model_succeeds():
+    """No warning when the first model works fine."""
+    ok_proc = AsyncMock()
+    ok_proc.returncode = 0
+    ok_json = json.dumps({"session_id": "x", "response": "first try", "stats": {}})
+    ok_proc.communicate = AsyncMock(return_value=(ok_json.encode(), b""))
+
+    with patch(
+        "gemini_mcp.gemini.asyncio.create_subprocess_exec",
+        return_value=ok_proc,
+    ):
+        result = await run_gemini(
+            prompt="hi",
+            models=["model-a", "model-b"],
+        )
+        assert result == "first try"
+        assert "WARNING" not in result
 
 
 @pytest.mark.asyncio
@@ -133,3 +155,116 @@ async def test_run_gemini_fallback_all_fail():
             models=["bad1", "bad2"],
         )
         assert "Error" in result
+
+
+# --- _should_fallback tests ---
+
+
+@pytest.mark.parametrize("msg", [
+    "Error: model xyz not found",
+    "model does not exist",
+    "model unavailable",
+    "HTTP 404 response",
+    "model not supported for this request",
+    "this model is deprecated",
+])
+def test_should_fallback_on_availability_errors(msg):
+    assert _should_fallback(msg) is True
+
+
+@pytest.mark.parametrize("msg", [
+    "Error: 429 Too Many Requests",
+    "rate limit exceeded",
+    "quota exceeded for project",
+    "RESOURCE_EXHAUSTED",
+    "service overloaded, try again",
+    "too many requests",
+    "503 Service Temporarily Unavailable",
+    "temporarily unavailable",
+])
+def test_should_not_fallback_on_transient_errors(msg):
+    assert _should_fallback(msg) is False
+
+
+def test_should_fallback_on_unknown_errors():
+    """Unknown errors default to fallback."""
+    assert _should_fallback("Error: something totally unexpected") is True
+
+
+# --- Retry behavior tests ---
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_retries_same_model():
+    """Rate limit error retries the same model instead of falling back."""
+    fail_proc = AsyncMock()
+    fail_proc.returncode = 1
+    fail_proc.communicate = AsyncMock(return_value=(b"", b"429 rate limit exceeded"))
+
+    ok_proc = AsyncMock()
+    ok_proc.returncode = 0
+    ok_json = json.dumps({"session_id": "x", "response": "retry worked", "stats": {}})
+    ok_proc.communicate = AsyncMock(return_value=(ok_json.encode(), b""))
+
+    with (
+        patch("gemini_mcp.gemini.asyncio.create_subprocess_exec", side_effect=[fail_proc, ok_proc]) as mock_exec,
+        patch("gemini_mcp.gemini.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        result = await run_gemini(prompt="hi", model="gemini-3-pro-preview")
+        assert result == "retry worked"
+        # Both calls should use the same model — no fallback.
+        assert mock_exec.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_exhausts_retries_then_falls_back():
+    """If retries are exhausted on a transient error, fall back to the
+    next model but include a warning."""
+    fail_proc = AsyncMock()
+    fail_proc.returncode = 1
+    fail_proc.communicate = AsyncMock(return_value=(b"", b"429 rate limit exceeded"))
+
+    ok_proc = AsyncMock()
+    ok_proc.returncode = 0
+    ok_json = json.dumps({"session_id": "x", "response": "flash answered", "stats": {}})
+    ok_proc.communicate = AsyncMock(return_value=(ok_json.encode(), b""))
+
+    with (
+        patch("gemini_mcp.gemini.asyncio.create_subprocess_exec", side_effect=[fail_proc, fail_proc, fail_proc, ok_proc]) as mock_exec,
+        patch("gemini_mcp.gemini.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        result = await run_gemini(
+            prompt="hi",
+            models=["gemini-3-pro-preview", "gemini-2.5-flash"],
+        )
+        assert "flash answered" in result
+        assert "[WARNING: Fell back to gemini-2.5-flash]" in result
+        assert "gemini-3-pro-preview" in result
+        # 3 retries on first model + 1 success on second = 4
+        assert mock_exec.call_count == 4
+
+
+@pytest.mark.asyncio
+async def test_model_not_found_skips_retries():
+    """A 'model not found' error falls back immediately without retrying."""
+    fail_proc = AsyncMock()
+    fail_proc.returncode = 1
+    fail_proc.communicate = AsyncMock(return_value=(b"", b"model not found"))
+
+    ok_proc = AsyncMock()
+    ok_proc.returncode = 0
+    ok_json = json.dumps({"session_id": "x", "response": "fallback", "stats": {}})
+    ok_proc.communicate = AsyncMock(return_value=(ok_json.encode(), b""))
+
+    with patch(
+        "gemini_mcp.gemini.asyncio.create_subprocess_exec",
+        side_effect=[fail_proc, ok_proc],
+    ) as mock_exec:
+        result = await run_gemini(
+            prompt="hi",
+            models=["bad-model", "good-model"],
+        )
+        assert "fallback" in result
+        assert "[WARNING: Fell back to good-model]" in result
+        # Exactly 2 calls: one fail (no retry), one success.
+        assert mock_exec.call_count == 2
