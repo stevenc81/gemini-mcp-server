@@ -1,7 +1,7 @@
 import json
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
-from gemini_mcp.gemini import run_gemini, _should_fallback
+from gemini_mcp.gemini import run_gemini, _should_fallback, _format_metadata, _extract_stats
 
 
 @pytest.fixture
@@ -268,3 +268,74 @@ async def test_model_not_found_skips_retries():
         assert "[WARNING: Fell back to good-model]" in result
         # Exactly 2 calls: one fail (no retry), one success.
         assert mock_exec.call_count == 2
+
+
+# --- _extract_stats tests ---
+
+
+def test_extract_stats_from_json():
+    data = {
+        "response": "hello",
+        "stats": {
+            "models": {
+                "gemini-3-flash-preview": {
+                    "tokens": {"input": 100, "candidates": 50, "total": 150}
+                }
+            }
+        },
+    }
+    stats = _extract_stats(data)
+    assert stats["model"] == "gemini-3-flash-preview"
+    assert stats["input_tokens"] == 100
+    assert stats["output_tokens"] == 50
+
+
+def test_extract_stats_multiple_models():
+    """When multiple models appear in stats (e.g. routing model + main model),
+    pick the one with the most output tokens."""
+    data = {
+        "response": "hello",
+        "stats": {
+            "models": {
+                "gemini-2.5-flash-lite": {
+                    "tokens": {"input": 100, "candidates": 10, "total": 110}
+                },
+                "gemini-3-flash-preview": {
+                    "tokens": {"input": 8000, "candidates": 1333, "total": 9333}
+                },
+            }
+        },
+    }
+    stats = _extract_stats(data)
+    assert stats["model"] == "gemini-3-flash-preview"
+    assert stats["output_tokens"] == 1333
+
+
+def test_extract_stats_empty():
+    stats = _extract_stats({"response": "hello", "stats": {}})
+    assert stats is None
+
+
+def test_extract_stats_missing():
+    stats = _extract_stats({"response": "hello"})
+    assert stats is None
+
+
+# --- _format_metadata tests ---
+
+
+def test_format_metadata_no_fallback():
+    stats = {"model": "gemini-3-pro-preview", "input_tokens": 100, "output_tokens": 50}
+    result = _format_metadata(stats, fallback_from=None)
+    assert result == "---\nModel: gemini-3-pro-preview\nTokens: 100 input / 50 output"
+
+
+def test_format_metadata_with_fallback():
+    stats = {"model": "gemini-3-flash-preview", "input_tokens": 100, "output_tokens": 50}
+    result = _format_metadata(stats, fallback_from="gemini-3-pro-preview")
+    assert "fallback from gemini-3-pro-preview" in result
+
+
+def test_format_metadata_none_stats():
+    result = _format_metadata(None, fallback_from=None)
+    assert result is None

@@ -43,6 +43,32 @@ def _should_fallback(error_msg: str) -> bool:
     return True
 
 
+def _extract_stats(data: dict) -> dict | None:
+    """Extract model and token info from CLI JSON stats."""
+    models = data.get("stats", {}).get("models", {})
+    if not models:
+        return None
+    # Pick the model with the most output tokens (skip routing models).
+    best_model = max(models, key=lambda m: models[m].get("tokens", {}).get("candidates", 0))
+    tokens = models[best_model].get("tokens", {})
+    return {
+        "model": best_model,
+        "input_tokens": tokens.get("input", 0),
+        "output_tokens": tokens.get("candidates", 0),
+    }
+
+
+def _format_metadata(stats: dict | None, fallback_from: str | None) -> str | None:
+    """Format stats into a metadata footer string."""
+    if stats is None:
+        return None
+    model_line = f"Model: {stats['model']}"
+    if fallback_from:
+        model_line += f" (fallback from {fallback_from})"
+    token_line = f"Tokens: {stats['input_tokens']} input / {stats['output_tokens']} output"
+    return f"---\n{model_line}\n{token_line}"
+
+
 async def _call_gemini(
     gemini_path: str,
     prompt: str,
