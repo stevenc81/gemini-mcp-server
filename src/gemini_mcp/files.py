@@ -38,10 +38,16 @@ def resolve_files(
     glob_patterns: list[str] | None = None,
     directories: list[str] | None = None,
     max_files: int = 500,
-) -> list[str]:
-    """Resolve explicit file paths, glob patterns, and directories into a deduplicated list of existing file paths."""
+) -> tuple[list[str], int]:
+    """Resolve explicit file paths, glob patterns, and directories into a deduplicated list of existing file paths.
+
+    Returns a tuple of (resolved_paths, skipped_count). Files discovered via
+    glob patterns or directory walks are filtered against ``_should_skip_file``;
+    explicitly listed files are never filtered.
+    """
     resolved: list[str] = []
     seen: set[str] = set()
+    skipped = 0
 
     for path in files or []:
         if len(resolved) >= max_files:
@@ -59,6 +65,9 @@ def resolve_files(
                 break
             abs_path = os.path.abspath(path)
             if abs_path not in seen and os.path.isfile(abs_path):
+                if _should_skip_file(os.path.basename(abs_path)):
+                    skipped += 1
+                    continue
                 resolved.append(abs_path)
                 seen.add(abs_path)
 
@@ -78,10 +87,13 @@ def resolve_files(
                     break
                 abs_path = os.path.join(dirpath, filename)
                 if abs_path not in seen and os.path.isfile(abs_path):
+                    if _should_skip_file(filename):
+                        skipped += 1
+                        continue
                     resolved.append(abs_path)
                     seen.add(abs_path)
 
-    return resolved
+    return resolved, skipped
 
 
 def _display_path(path: str) -> str:

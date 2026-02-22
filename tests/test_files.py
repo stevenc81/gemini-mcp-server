@@ -8,7 +8,7 @@ def test_resolve_files_with_explicit_paths():
         f.write(b"hello")
         path = f.name
     try:
-        result = resolve_files(files=[path])
+        result, _ = resolve_files(files=[path])
         assert result == [path]
     finally:
         os.unlink(path)
@@ -18,7 +18,7 @@ def test_resolve_files_with_glob_pattern(tmp_path):
     (tmp_path / "a.py").write_text("aaa")
     (tmp_path / "b.py").write_text("bbb")
     (tmp_path / "c.txt").write_text("ccc")
-    result = resolve_files(glob_patterns=[str(tmp_path / "*.py")])
+    result, _ = resolve_files(glob_patterns=[str(tmp_path / "*.py")])
     assert sorted(result) == sorted([str(tmp_path / "a.py"), str(tmp_path / "b.py")])
 
 
@@ -26,7 +26,7 @@ def test_resolve_files_combines_both(tmp_path):
     explicit = tmp_path / "explicit.py"
     explicit.write_text("explicit")
     (tmp_path / "glob1.py").write_text("glob1")
-    result = resolve_files(
+    result, _ = resolve_files(
         files=[str(explicit)],
         glob_patterns=[str(tmp_path / "glob*.py")],
     )
@@ -37,7 +37,7 @@ def test_resolve_files_combines_both(tmp_path):
 def test_resolve_files_deduplicates(tmp_path):
     f = tmp_path / "dup.py"
     f.write_text("dup")
-    result = resolve_files(
+    result, _ = resolve_files(
         files=[str(f)],
         glob_patterns=[str(tmp_path / "*.py")],
     )
@@ -45,7 +45,7 @@ def test_resolve_files_deduplicates(tmp_path):
 
 
 def test_resolve_files_skips_missing():
-    result = resolve_files(files=["/nonexistent/file.py"])
+    result, _ = resolve_files(files=["/nonexistent/file.py"])
     assert result == []
 
 
@@ -65,7 +65,7 @@ def test_read_files_as_context_empty():
 def test_resolve_files_respects_max_files(tmp_path):
     for i in range(10):
         (tmp_path / f"file{i}.py").write_text(f"content{i}")
-    result = resolve_files(glob_patterns=[str(tmp_path / "*.py")], max_files=3)
+    result, _ = resolve_files(glob_patterns=[str(tmp_path / "*.py")], max_files=3)
     assert len(result) == 3
 
 
@@ -97,7 +97,7 @@ def test_resolve_files_with_directories(tmp_path):
     sub.mkdir()
     (tmp_path / "root.py").write_text("root")
     (sub / "nested.py").write_text("nested")
-    result = resolve_files(directories=[str(tmp_path)])
+    result, _ = resolve_files(directories=[str(tmp_path)])
     basenames = [os.path.basename(p) for p in result]
     assert "root.py" in basenames
     assert "nested.py" in basenames
@@ -106,7 +106,7 @@ def test_resolve_files_with_directories(tmp_path):
 def test_resolve_files_directories_dedup_with_files(tmp_path):
     f = tmp_path / "dup.py"
     f.write_text("dup")
-    result = resolve_files(
+    result, _ = resolve_files(
         files=[str(f)],
         directories=[str(tmp_path)],
     )
@@ -116,12 +116,12 @@ def test_resolve_files_directories_dedup_with_files(tmp_path):
 def test_resolve_files_directories_respects_max_files(tmp_path):
     for i in range(10):
         (tmp_path / f"file{i}.py").write_text(f"content{i}")
-    result = resolve_files(directories=[str(tmp_path)], max_files=3)
+    result, _ = resolve_files(directories=[str(tmp_path)], max_files=3)
     assert len(result) == 3
 
 
 def test_resolve_files_directories_skips_nonexistent():
-    result = resolve_files(directories=["/nonexistent/directory"])
+    result, _ = resolve_files(directories=["/nonexistent/directory"])
     assert result == []
 
 
@@ -138,7 +138,7 @@ def test_resolve_files_directories_skips_junk_dirs(tmp_path):
     node = tmp_path / "node_modules"
     node.mkdir()
     (node / "pkg.js").write_text("pkg")
-    result = resolve_files(directories=[str(tmp_path)])
+    result, _ = resolve_files(directories=[str(tmp_path)])
     basenames = [os.path.basename(p) for p in result]
     assert "app.py" in basenames
     assert "config" not in basenames
@@ -169,3 +169,35 @@ def test_should_not_skip_text_files():
 def test_should_skip_case_insensitive():
     assert _should_skip_file("IMAGE.PNG") is True
     assert _should_skip_file("Photo.JPG") is True
+
+
+def test_resolve_files_directories_skips_binary_files(tmp_path):
+    (tmp_path / "app.py").write_text("code")
+    (tmp_path / "photo.png").write_bytes(b"\x89PNG")
+    (tmp_path / "lib.so").write_bytes(b"\x7fELF")
+    (tmp_path / ".DS_Store").write_bytes(b"junk")
+    result, skipped = resolve_files(directories=[str(tmp_path)])
+    basenames = [os.path.basename(p) for p in result]
+    assert "app.py" in basenames
+    assert "photo.png" not in basenames
+    assert "lib.so" not in basenames
+    assert ".DS_Store" not in basenames
+    assert skipped == 3
+
+
+def test_resolve_files_globs_skip_binary_files(tmp_path):
+    (tmp_path / "app.py").write_text("code")
+    (tmp_path / "photo.png").write_bytes(b"\x89PNG")
+    result, skipped = resolve_files(glob_patterns=[str(tmp_path / "*")])
+    basenames = [os.path.basename(p) for p in result]
+    assert "app.py" in basenames
+    assert "photo.png" not in basenames
+    assert skipped == 1
+
+
+def test_resolve_files_explicit_files_not_filtered(tmp_path):
+    png = tmp_path / "photo.png"
+    png.write_bytes(b"\x89PNG")
+    result, skipped = resolve_files(files=[str(png)])
+    assert len(result) == 1
+    assert skipped == 0
