@@ -7,6 +7,31 @@ _SKIP_DIRS = {
     ".next", ".nuxt", "dist", "build", ".eggs",
 }
 
+_SKIP_EXTENSIONS = {
+    # Images
+    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".bmp", ".webp",
+    # Audio/video
+    ".mp3", ".mp4", ".wav", ".avi", ".mov",
+    # Fonts
+    ".woff", ".woff2", ".ttf", ".eot", ".otf",
+    # Compiled/binary
+    ".pyc", ".pyo", ".so", ".dll", ".dylib", ".exe", ".o", ".a", ".class",
+    # Archives
+    ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
+    # Source maps
+    ".map",
+}
+
+_SKIP_FILES = {".DS_Store"}
+
+
+def _should_skip_file(filename: str) -> bool:
+    """Return True if this file should be excluded from context."""
+    if filename in _SKIP_FILES:
+        return True
+    _, ext = os.path.splitext(filename)
+    return ext.lower() in _SKIP_EXTENSIONS
+
 
 def resolve_files(
     files: list[str] | None = None,

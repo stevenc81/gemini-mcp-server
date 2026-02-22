@@ -1,6 +1,6 @@
 import os
 import tempfile
-from gemini_mcp.files import resolve_files, read_files_as_context
+from gemini_mcp.files import resolve_files, read_files_as_context, _should_skip_file
 
 
 def test_resolve_files_with_explicit_paths():
@@ -144,3 +144,28 @@ def test_resolve_files_directories_skips_junk_dirs(tmp_path):
     assert "config" not in basenames
     assert "mod.cpython-312.pyc" not in basenames
     assert "pkg.js" not in basenames
+
+
+def test_should_skip_binary_extensions():
+    assert _should_skip_file("photo.png") is True
+    assert _should_skip_file("image.jpg") is True
+    assert _should_skip_file("font.woff2") is True
+    assert _should_skip_file("lib.so") is True
+    assert _should_skip_file("archive.zip") is True
+    assert _should_skip_file("bundle.map") is True
+
+
+def test_should_skip_junk_files():
+    assert _should_skip_file(".DS_Store") is True
+
+
+def test_should_not_skip_text_files():
+    assert _should_skip_file("app.py") is False
+    assert _should_skip_file("README.md") is False
+    assert _should_skip_file("package.json") is False
+    assert _should_skip_file("yarn.lock") is False
+
+
+def test_should_skip_case_insensitive():
+    assert _should_skip_file("IMAGE.PNG") is True
+    assert _should_skip_file("Photo.JPG") is True
