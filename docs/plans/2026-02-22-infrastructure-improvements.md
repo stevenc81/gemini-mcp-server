@@ -52,6 +52,27 @@ def test_resolve_files_directories_respects_max_files(tmp_path):
 def test_resolve_files_directories_skips_nonexistent():
     result = resolve_files(directories=["/nonexistent/directory"])
     assert result == []
+
+
+def test_resolve_files_directories_skips_junk_dirs(tmp_path):
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "app.py").write_text("app")
+    git = tmp_path / ".git"
+    git.mkdir()
+    (git / "config").write_text("gitconfig")
+    pycache = tmp_path / "__pycache__"
+    pycache.mkdir()
+    (pycache / "mod.cpython-312.pyc").write_text("bytecode")
+    node = tmp_path / "node_modules"
+    node.mkdir()
+    (node / "pkg.js").write_text("pkg")
+    result = resolve_files(directories=[str(tmp_path)])
+    basenames = [os.path.basename(p) for p in result]
+    assert "app.py" in basenames
+    assert "config" not in basenames
+    assert "mod.cpython-312.pyc" not in basenames
+    assert "pkg.js" not in basenames
 ```
 
 **Step 2: Run tests to verify they fail**
@@ -61,9 +82,16 @@ Expected: FAIL — `resolve_files()` doesn't accept `directories` parameter
 
 **Step 3: Implement directory support in resolve_files**
 
-In `src/gemini_mcp/files.py`, add `directories` parameter to `resolve_files()` and walk each directory with `os.walk()`:
+In `src/gemini_mcp/files.py`, add a skip-list constant and `directories` parameter to `resolve_files()`. Walk each directory with `os.walk()`, pruning junk directories in-place:
 
 ```python
+_SKIP_DIRS = {
+    ".git", "__pycache__", "node_modules", ".venv", ".env",
+    ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+    ".next", ".nuxt", "dist", "build", ".eggs",
+}
+
+
 def resolve_files(
     files: list[str] | None = None,
     glob_patterns: list[str] | None = None,
@@ -99,7 +127,9 @@ def resolve_files(
         abs_dir = os.path.abspath(directory)
         if not os.path.isdir(abs_dir):
             continue
-        for dirpath, _, filenames in os.walk(abs_dir):
+        for dirpath, dirnames, filenames in os.walk(abs_dir):
+            # Prune junk directories in-place so os.walk skips them.
+            dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS)
             if len(resolved) >= max_files:
                 break
             for filename in sorted(filenames):
