@@ -76,6 +76,17 @@ async def test_gemini_query_with_directories(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_gemini_query_passes_skipped_count(tmp_path):
+    (tmp_path / "app.py").write_text("code")
+    (tmp_path / "photo.png").write_bytes(b"\x89PNG")
+    with patch("gemini_mcp.server.run_gemini", new_callable=AsyncMock) as mock_run:
+        mock_run.return_value = "result"
+        await gemini_query.fn(prompt="Review", directories=[str(tmp_path)])
+        call_kwargs = mock_run.call_args[1]
+        assert call_kwargs["skipped_files"] == 1
+
+
+@pytest.mark.asyncio
 async def test_gemini_query_no_files_no_globs():
     with patch("gemini_mcp.server.run_gemini", new_callable=AsyncMock) as mock_run:
         mock_run.return_value = "response"

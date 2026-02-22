@@ -58,7 +58,7 @@ def _extract_stats(data: dict) -> dict | None:
     }
 
 
-def _format_metadata(stats: dict | None, fallback_from: str | None) -> str | None:
+def _format_metadata(stats: dict | None, fallback_from: str | None, skipped_files: int = 0) -> str | None:
     """Format stats into a metadata footer string."""
     if stats is None:
         return None
@@ -66,7 +66,10 @@ def _format_metadata(stats: dict | None, fallback_from: str | None) -> str | Non
     if fallback_from:
         model_line += f" (fallback from {fallback_from})"
     token_line = f"Tokens: {stats['input_tokens']} input / {stats['output_tokens']} output"
-    return f"---\n{model_line}\n{token_line}"
+    lines = ["---", model_line, token_line]
+    if skipped_files > 0:
+        lines.append(f"Skipped: {skipped_files} binary/junk files")
+    return "\n".join(lines)
 
 
 async def _call_gemini(
@@ -154,6 +157,7 @@ async def run_gemini(
     model: str | None = None,
     models: list[str] | None = None,
     timeout: int = 120,
+    skipped_files: int = 0,
 ) -> str:
     """Run Gemini CLI in headless mode and return the response text.
 
@@ -198,6 +202,7 @@ async def run_gemini(
             metadata = _format_metadata(
                 stats,
                 fallback_from=failures[0][0] if failures else None,
+                skipped_files=skipped_files,
             )
             if metadata:
                 parts.append(metadata)

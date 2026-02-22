@@ -397,6 +397,19 @@ async def test_run_gemini_metadata_shows_fallback():
         assert "300 input / 100 output" in result
 
 
+def test_format_metadata_with_skipped_files():
+    stats = {"model": "gemini-3-pro-preview", "input_tokens": 100, "output_tokens": 50}
+    result = _format_metadata(stats, fallback_from=None, skipped_files=14)
+    assert "Skipped: 14 binary/junk files" in result
+    assert "Model: gemini-3-pro-preview" in result
+
+
+def test_format_metadata_no_skipped_files():
+    stats = {"model": "gemini-3-pro-preview", "input_tokens": 100, "output_tokens": 50}
+    result = _format_metadata(stats, fallback_from=None, skipped_files=0)
+    assert "Skipped" not in result
+
+
 @pytest.mark.asyncio
 async def test_run_gemini_no_metadata_on_plain_text():
     proc = AsyncMock()

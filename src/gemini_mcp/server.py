@@ -46,7 +46,7 @@ async def gemini_query(
         model: Specific Gemini model to use (no fallback). If not set, tries the fallback chain.
         timeout: Max seconds to wait for Gemini response. Default 120.
     """
-    file_paths, _skipped = await asyncio.to_thread(resolve_files, files, glob_patterns, directories)
+    file_paths, skipped_files = await asyncio.to_thread(resolve_files, files, glob_patterns, directories)
     context = await asyncio.to_thread(read_files_as_context, file_paths)
 
     return await run_gemini(
@@ -55,6 +55,7 @@ async def gemini_query(
         model=model,
         models=None if model else MODEL_FALLBACK_CHAIN,
         timeout=timeout,
+        skipped_files=skipped_files,
     )
 
 
