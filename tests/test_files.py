@@ -90,3 +90,57 @@ def test_read_files_as_context_skips_oversized_first_file(tmp_path):
     assert "big.txt" not in context or 'error=' in context or "Context truncated" in context
     assert "Context truncated" in context
     assert "0 of 1 files included" in context
+
+
+def test_resolve_files_with_directories(tmp_path):
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (tmp_path / "root.py").write_text("root")
+    (sub / "nested.py").write_text("nested")
+    result = resolve_files(directories=[str(tmp_path)])
+    abs_paths = [os.path.basename(p) for p in result]
+    assert "root.py" in abs_paths
+    assert "nested.py" in abs_paths
+
+
+def test_resolve_files_directories_dedup_with_files(tmp_path):
+    f = tmp_path / "dup.py"
+    f.write_text("dup")
+    result = resolve_files(
+        files=[str(f)],
+        directories=[str(tmp_path)],
+    )
+    assert result.count(str(f)) == 1
+
+
+def test_resolve_files_directories_respects_max_files(tmp_path):
+    for i in range(10):
+        (tmp_path / f"file{i}.py").write_text(f"content{i}")
+    result = resolve_files(directories=[str(tmp_path)], max_files=3)
+    assert len(result) == 3
+
+
+def test_resolve_files_directories_skips_nonexistent():
+    result = resolve_files(directories=["/nonexistent/directory"])
+    assert result == []
+
+
+def test_resolve_files_directories_skips_junk_dirs(tmp_path):
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "app.py").write_text("app")
+    git = tmp_path / ".git"
+    git.mkdir()
+    (git / "config").write_text("gitconfig")
+    pycache = tmp_path / "__pycache__"
+    pycache.mkdir()
+    (pycache / "mod.cpython-312.pyc").write_text("bytecode")
+    node = tmp_path / "node_modules"
+    node.mkdir()
+    (node / "pkg.js").write_text("pkg")
+    result = resolve_files(directories=[str(tmp_path)])
+    basenames = [os.path.basename(p) for p in result]
+    assert "app.py" in basenames
+    assert "config" not in basenames
+    assert "mod.cpython-312.pyc" not in basenames
+    assert "pkg.js" not in basenames

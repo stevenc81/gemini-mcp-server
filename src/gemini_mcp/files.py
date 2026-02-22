@@ -1,13 +1,20 @@
 import glob as globmod
 import os
 
+_SKIP_DIRS = {
+    ".git", "__pycache__", "node_modules", ".venv", ".env",
+    ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+    ".next", ".nuxt", "dist", "build", ".eggs",
+}
+
 
 def resolve_files(
     files: list[str] | None = None,
     glob_patterns: list[str] | None = None,
+    directories: list[str] | None = None,
     max_files: int = 500,
 ) -> list[str]:
-    """Resolve explicit file paths and glob patterns into a deduplicated list of existing file paths."""
+    """Resolve explicit file paths, glob patterns, and directories into a deduplicated list of existing file paths."""
     resolved: list[str] = []
     seen: set[str] = set()
 
@@ -29,6 +36,25 @@ def resolve_files(
             if abs_path not in seen and os.path.isfile(abs_path):
                 resolved.append(abs_path)
                 seen.add(abs_path)
+
+    for directory in directories or []:
+        if len(resolved) >= max_files:
+            break
+        abs_dir = os.path.abspath(directory)
+        if not os.path.isdir(abs_dir):
+            continue
+        for dirpath, dirnames, filenames in os.walk(abs_dir):
+            # Prune junk directories in-place so os.walk skips them.
+            dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS)
+            if len(resolved) >= max_files:
+                break
+            for filename in sorted(filenames):
+                if len(resolved) >= max_files:
+                    break
+                abs_path = os.path.join(dirpath, filename)
+                if abs_path not in seen:
+                    resolved.append(abs_path)
+                    seen.add(abs_path)
 
     return resolved
 
