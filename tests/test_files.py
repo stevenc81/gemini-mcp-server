@@ -98,9 +98,9 @@ def test_resolve_files_with_directories(tmp_path):
     (tmp_path / "root.py").write_text("root")
     (sub / "nested.py").write_text("nested")
     result = resolve_files(directories=[str(tmp_path)])
-    abs_paths = [os.path.basename(p) for p in result]
-    assert "root.py" in abs_paths
-    assert "nested.py" in abs_paths
+    basenames = [os.path.basename(p) for p in result]
+    assert "root.py" in basenames
+    assert "nested.py" in basenames
 
 
 def test_resolve_files_directories_dedup_with_files(tmp_path):

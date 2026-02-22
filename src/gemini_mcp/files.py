@@ -52,7 +52,7 @@ def resolve_files(
                 if len(resolved) >= max_files:
                     break
                 abs_path = os.path.join(dirpath, filename)
-                if abs_path not in seen:
+                if abs_path not in seen and os.path.isfile(abs_path):
                     resolved.append(abs_path)
                     seen.add(abs_path)
 
