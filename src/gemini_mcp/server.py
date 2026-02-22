@@ -20,6 +20,7 @@ async def gemini_query(
     prompt: str,
     files: list[str] | None = None,
     glob_patterns: list[str] | None = None,
+    directories: list[str] | None = None,
     model: str | None = None,
     timeout: int = 120,
 ) -> str:
@@ -41,10 +42,11 @@ async def gemini_query(
         prompt: The instruction or question for Gemini.
         files: Optional list of absolute file paths to include as context.
         glob_patterns: Optional glob patterns (e.g., "src/**/*.py") resolved server-side.
+        directories: Optional list of directory paths to recursively include.
         model: Specific Gemini model to use (no fallback). If not set, tries the fallback chain.
         timeout: Max seconds to wait for Gemini response. Default 120.
     """
-    file_paths = await asyncio.to_thread(resolve_files, files, glob_patterns)
+    file_paths = await asyncio.to_thread(resolve_files, files, glob_patterns, directories)
     context = await asyncio.to_thread(read_files_as_context, file_paths)
 
     return await run_gemini(

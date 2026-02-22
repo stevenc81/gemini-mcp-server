@@ -58,6 +58,24 @@ async def test_gemini_query_with_explicit_model():
 
 
 @pytest.mark.asyncio
+async def test_gemini_query_with_directories(tmp_path):
+    (tmp_path / "app.py").write_text("print('app')")
+    sub = tmp_path / "lib"
+    sub.mkdir()
+    (sub / "util.py").write_text("print('util')")
+    with patch("gemini_mcp.server.run_gemini", new_callable=AsyncMock) as mock_run:
+        mock_run.return_value = "Reviewed"
+        result = await gemini_query.fn(
+            prompt="Review",
+            directories=[str(tmp_path)],
+        )
+        assert result == "Reviewed"
+        call_kwargs = mock_run.call_args[1]
+        assert "print('app')" in call_kwargs["context"]
+        assert "print('util')" in call_kwargs["context"]
+
+
+@pytest.mark.asyncio
 async def test_gemini_query_no_files_no_globs():
     with patch("gemini_mcp.server.run_gemini", new_callable=AsyncMock) as mock_run:
         mock_run.return_value = "response"
