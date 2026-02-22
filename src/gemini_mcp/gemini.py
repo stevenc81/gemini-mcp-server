@@ -75,8 +75,8 @@ async def _call_gemini(
     context: str,
     model: str | None,
     timeout: int,
-) -> tuple[bool, str]:
-    """Run Gemini CLI once. Returns (success, result_text)."""
+) -> tuple[bool, str, dict | None]:
+    """Run Gemini CLI once. Returns (success, result_text, stats_or_none)."""
     cmd = [gemini_path, "-p", prompt, "-o", "json"]
     if model:
         cmd.extend(["-m", model])
@@ -95,18 +95,18 @@ async def _call_gemini(
             timeout=timeout,
         )
     except asyncio.TimeoutError:
-        return False, f"Error: gemini CLI timed out after {timeout}s"
+        return False, f"Error: gemini CLI timed out after {timeout}s", None
     except OSError as e:
-        return False, f"Error: failed to run gemini CLI: {e}"
+        return False, f"Error: failed to run gemini CLI: {e}", None
 
     if proc.returncode != 0:
         error_msg = stderr.decode().strip() if stderr else "unknown error"
-        return False, f"Error: gemini CLI exited with code {proc.returncode}: {error_msg}"
+        return False, f"Error: gemini CLI exited with code {proc.returncode}: {error_msg}", None
 
     stdout_text = stdout.decode().strip()
     try:
         data = json.loads(stdout_text)
-        return True, data.get("response", stdout_text)
+        return True, data.get("response", stdout_text), _extract_stats(data)
     except json.JSONDecodeError:
         for line in reversed(stdout_text.splitlines()):
             line = line.strip()
@@ -114,10 +114,10 @@ async def _call_gemini(
                 continue
             try:
                 data = json.loads(line)
-                return True, data.get("response", stdout_text)
+                return True, data.get("response", stdout_text), _extract_stats(data)
             except (json.JSONDecodeError, AttributeError):
                 continue
-        return True, stdout_text
+        return True, stdout_text, None
 
 
 async def _call_with_retries(
@@ -126,26 +126,26 @@ async def _call_with_retries(
     context: str,
     model: str | None,
     timeout: int,
-) -> tuple[bool, str]:
+) -> tuple[bool, str, dict | None]:
     """Try a model, retrying on transient errors.
 
-    Returns (success, result_text).
+    Returns (success, result_text, stats_or_none).
     """
     last_error = ""
     for attempt in range(_MAX_RETRIES + 1):
-        success, result = await _call_gemini(gemini_path, prompt, context, model, timeout)
+        success, result, stats = await _call_gemini(gemini_path, prompt, context, model, timeout)
         if success:
-            return True, result
+            return True, result, stats
         last_error = result
         if _should_fallback(result):
-            return False, result
+            return False, result, None
         # Transient error — retry after a delay
         if attempt < _MAX_RETRIES:
             await asyncio.sleep(_RETRY_DELAY_SECS)
 
     # Exhausted retries on a transient error — fall back, but caller
     # will record that we tried this model.
-    return False, last_error
+    return False, last_error, None
 
 
 async def run_gemini(
@@ -187,14 +187,21 @@ async def run_gemini(
 
     failures: list[tuple[str, str]] = []  # (model_name, error_msg)
     for m in to_try:
-        success, result = await _call_with_retries(
+        success, result, stats = await _call_with_retries(
             gemini_path, prompt, context, m, timeout,
         )
         if success:
+            parts = []
             if failures:
-                warning = _format_fallback_warning(failures, m)
-                return f"{warning}\n\n{result}"
-            return result
+                parts.append(_format_fallback_warning(failures, m))
+            parts.append(result)
+            metadata = _format_metadata(
+                stats,
+                fallback_from=failures[0][0] if failures else None,
+            )
+            if metadata:
+                parts.append(metadata)
+            return "\n\n".join(parts)
         failures.append((m or "default", result))
 
     return failures[-1][1] if failures else "Error: no models to try"

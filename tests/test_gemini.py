@@ -339,3 +339,70 @@ def test_format_metadata_with_fallback():
 def test_format_metadata_none_stats():
     result = _format_metadata(None, fallback_from=None)
     assert result is None
+
+
+# --- Metadata wiring tests ---
+
+
+@pytest.mark.asyncio
+async def test_run_gemini_includes_metadata():
+    proc = AsyncMock()
+    proc.returncode = 0
+    response_json = json.dumps({
+        "response": "The answer",
+        "stats": {
+            "models": {
+                "gemini-3-pro-preview": {
+                    "tokens": {"input": 500, "candidates": 200, "total": 700}
+                }
+            }
+        },
+    })
+    proc.communicate = AsyncMock(return_value=(response_json.encode(), b""))
+    with patch("gemini_mcp.gemini.asyncio.create_subprocess_exec", return_value=proc):
+        result = await run_gemini(prompt="hi")
+        assert "The answer" in result
+        assert "---" in result
+        assert "Model: gemini-3-pro-preview" in result
+        assert "500 input / 200 output" in result
+
+
+@pytest.mark.asyncio
+async def test_run_gemini_metadata_shows_fallback():
+    fail_proc = AsyncMock()
+    fail_proc.returncode = 1
+    fail_proc.communicate = AsyncMock(return_value=(b"", b"model not found"))
+
+    ok_proc = AsyncMock()
+    ok_proc.returncode = 0
+    ok_json = json.dumps({
+        "response": "fallback worked",
+        "stats": {
+            "models": {
+                "gemini-3-flash-preview": {
+                    "tokens": {"input": 300, "candidates": 100, "total": 400}
+                }
+            }
+        },
+    })
+    ok_proc.communicate = AsyncMock(return_value=(ok_json.encode(), b""))
+
+    with patch(
+        "gemini_mcp.gemini.asyncio.create_subprocess_exec",
+        side_effect=[fail_proc, ok_proc],
+    ):
+        result = await run_gemini(prompt="hi", models=["bad-model", "gemini-3-flash-preview"])
+        assert "fallback worked" in result
+        assert "fallback from bad-model" in result
+        assert "300 input / 100 output" in result
+
+
+@pytest.mark.asyncio
+async def test_run_gemini_no_metadata_on_plain_text():
+    proc = AsyncMock()
+    proc.returncode = 0
+    proc.communicate = AsyncMock(return_value=(b"plain text no json", b""))
+    with patch("gemini_mcp.gemini.asyncio.create_subprocess_exec", return_value=proc):
+        result = await run_gemini(prompt="hi")
+        assert result == "plain text no json"
+        assert "---" not in result
