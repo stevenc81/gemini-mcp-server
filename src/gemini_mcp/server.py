@@ -23,6 +23,7 @@ async def gemini_query(
     directories: list[str] | None = None,
     model: str | None = None,
     timeout: int = 120,
+    session_id: str | None = None,
 ) -> str:
     """Send a query to Gemini CLI and return its response.
 
@@ -45,6 +46,7 @@ async def gemini_query(
         directories: Optional list of directory paths to recursively include.
         model: Specific Gemini model to use (no fallback). If not set, tries the fallback chain.
         timeout: Max seconds to wait for Gemini response. Default 120.
+        session_id: Optional session ID to resume a previous conversation.
     """
     file_paths, skipped_files = await asyncio.to_thread(resolve_files, files, glob_patterns, directories)
     context = await asyncio.to_thread(read_files_as_context, file_paths)
@@ -56,6 +58,7 @@ async def gemini_query(
         models=None if model else MODEL_FALLBACK_CHAIN,
         timeout=timeout,
         skipped_files=skipped_files,
+        session_id=session_id,
     )
 
 

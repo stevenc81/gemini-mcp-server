@@ -84,11 +84,14 @@ async def _call_gemini(
     context: str,
     model: str | None,
     timeout: int,
+    session_id: str | None = None,
 ) -> tuple[bool, str, dict | None]:
     """Run Gemini CLI once. Returns (success, result_text, stats_or_none)."""
     cmd = [gemini_path, "-p", prompt, "-o", "json"]
     if model:
         cmd.extend(["-m", model])
+    if session_id:
+        cmd.extend(["-r", session_id])
 
     stdin_data = context.encode() if context else None
 
@@ -135,6 +138,7 @@ async def _call_with_retries(
     context: str,
     model: str | None,
     timeout: int,
+    session_id: str | None = None,
 ) -> tuple[bool, str, dict | None]:
     """Try a model, retrying on transient errors.
 
@@ -142,7 +146,7 @@ async def _call_with_retries(
     """
     last_error = ""
     for attempt in range(_MAX_RETRIES + 1):
-        success, result, stats = await _call_gemini(gemini_path, prompt, context, model, timeout)
+        success, result, stats = await _call_gemini(gemini_path, prompt, context, model, timeout, session_id)
         if success:
             return True, result, stats
         last_error = result
@@ -164,6 +168,7 @@ async def run_gemini(
     models: list[str] | None = None,
     timeout: int = 120,
     skipped_files: int = 0,
+    session_id: str | None = None,
 ) -> str:
     """Run Gemini CLI in headless mode and return the response text.
 
@@ -183,6 +188,7 @@ async def run_gemini(
         model: Single model to use (no fallback).
         models: Ordered list of models to try. First success wins.
         timeout: Timeout in seconds. Default 120.
+        session_id: Optional session ID to resume a previous conversation.
     """
     gemini_path = shutil.which("gemini")
     if not gemini_path:
@@ -196,9 +202,10 @@ async def run_gemini(
         to_try = [None]
 
     failures: list[tuple[str, str]] = []  # (model_name, error_msg)
+    current_session_id = session_id
     for m in to_try:
         success, result, stats = await _call_with_retries(
-            gemini_path, prompt, context, m, timeout,
+            gemini_path, prompt, context, m, timeout, current_session_id,
         )
         if success:
             parts = []
@@ -214,6 +221,7 @@ async def run_gemini(
                 parts.append(metadata)
             return "\n\n".join(parts)
         failures.append((m or "default", result))
+        current_session_id = None  # Drop resume on fallback
 
     return failures[-1][1] if failures else "Error: no models to try"
 

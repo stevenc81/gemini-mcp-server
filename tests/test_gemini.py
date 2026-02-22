@@ -467,3 +467,70 @@ async def test_run_gemini_no_metadata_on_plain_text():
         result = await run_gemini(prompt="hi")
         assert result == "plain text no json"
         assert "---" not in result
+
+
+# --- Session continuity (--resume flag) tests ---
+
+
+@pytest.mark.asyncio
+async def test_run_gemini_passes_resume_flag():
+    """When session_id is provided, CLI should get -r flag."""
+    proc = AsyncMock()
+    proc.returncode = 0
+    response_json = json.dumps({
+        "session_id": "abc-123",
+        "response": "resumed",
+        "stats": {},
+    })
+    proc.communicate = AsyncMock(return_value=(response_json.encode(), b""))
+    with patch("gemini_mcp.gemini.asyncio.create_subprocess_exec", return_value=proc) as mock_exec:
+        result = await run_gemini(prompt="follow up", session_id="abc-123")
+        call_args = mock_exec.call_args[0]
+        assert "-r" in call_args
+        idx = list(call_args).index("-r")
+        assert call_args[idx + 1] == "abc-123"
+
+
+@pytest.mark.asyncio
+async def test_run_gemini_no_resume_without_session_id():
+    """Without session_id, no -r flag."""
+    proc = AsyncMock()
+    proc.returncode = 0
+    response_json = json.dumps({
+        "session_id": "new-session",
+        "response": "fresh",
+        "stats": {},
+    })
+    proc.communicate = AsyncMock(return_value=(response_json.encode(), b""))
+    with patch("gemini_mcp.gemini.asyncio.create_subprocess_exec", return_value=proc) as mock_exec:
+        await run_gemini(prompt="hello")
+        call_args = mock_exec.call_args[0]
+        assert "-r" not in call_args
+
+
+@pytest.mark.asyncio
+async def test_run_gemini_drops_resume_on_fallback():
+    """When falling back to a different model, drop --resume."""
+    fail_proc = AsyncMock()
+    fail_proc.returncode = 1
+    fail_proc.communicate = AsyncMock(return_value=(b"", b"model not found"))
+
+    ok_proc = AsyncMock()
+    ok_proc.returncode = 0
+    ok_json = json.dumps({"session_id": "new-id", "response": "fallback", "stats": {}})
+    ok_proc.communicate = AsyncMock(return_value=(ok_json.encode(), b""))
+
+    with patch(
+        "gemini_mcp.gemini.asyncio.create_subprocess_exec",
+        side_effect=[fail_proc, ok_proc],
+    ) as mock_exec:
+        await run_gemini(
+            prompt="hi",
+            models=["bad-model", "good-model"],
+            session_id="old-session",
+        )
+        # First call should have -r, second (fallback) should NOT
+        first_call_args = mock_exec.call_args_list[0][0]
+        second_call_args = mock_exec.call_args_list[1][0]
+        assert "-r" in first_call_args
+        assert "-r" not in second_call_args

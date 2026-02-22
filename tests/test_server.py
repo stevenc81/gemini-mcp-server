@@ -93,3 +93,13 @@ async def test_gemini_query_no_files_no_globs():
         await gemini_query.fn(prompt="hello")
         call_kwargs = mock_run.call_args[1]
         assert call_kwargs["context"] == ""
+
+
+@pytest.mark.asyncio
+async def test_gemini_query_with_session_id():
+    with patch("gemini_mcp.server.run_gemini", new_callable=AsyncMock) as mock_run:
+        mock_run.return_value = "continued"
+        result = await gemini_query.fn(prompt="follow up", session_id="abc-123")
+        assert result == "continued"
+        call_kwargs = mock_run.call_args[1]
+        assert call_kwargs["session_id"] == "abc-123"
