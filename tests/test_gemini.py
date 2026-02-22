@@ -410,6 +410,54 @@ def test_format_metadata_no_skipped_files():
     assert "Skipped" not in result
 
 
+def test_extract_stats_includes_session_id():
+    data = {
+        "session_id": "abc-123",
+        "response": "hello",
+        "stats": {
+            "models": {
+                "gemini-3-pro-preview": {
+                    "tokens": {"input": 100, "candidates": 50, "total": 150}
+                }
+            }
+        },
+    }
+    stats = _extract_stats(data)
+    assert stats["session_id"] == "abc-123"
+
+
+def test_extract_stats_no_session_id():
+    data = {
+        "response": "hello",
+        "stats": {
+            "models": {
+                "gemini-3-pro-preview": {
+                    "tokens": {"input": 100, "candidates": 50, "total": 150}
+                }
+            }
+        },
+    }
+    stats = _extract_stats(data)
+    assert stats.get("session_id") is None
+
+
+def test_format_metadata_with_session_id():
+    stats = {
+        "model": "gemini-3-pro-preview",
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "session_id": "abc-123",
+    }
+    result = _format_metadata(stats, fallback_from=None)
+    assert "Session ID: abc-123" in result
+
+
+def test_format_metadata_without_session_id():
+    stats = {"model": "gemini-3-pro-preview", "input_tokens": 100, "output_tokens": 50}
+    result = _format_metadata(stats, fallback_from=None)
+    assert "Session ID" not in result
+
+
 @pytest.mark.asyncio
 async def test_run_gemini_no_metadata_on_plain_text():
     proc = AsyncMock()

@@ -44,18 +44,22 @@ def _should_fallback(error_msg: str) -> bool:
 
 
 def _extract_stats(data: dict) -> dict | None:
-    """Extract model and token info from CLI JSON stats."""
+    """Extract model, token info, and session ID from CLI JSON."""
     models = data.get("stats", {}).get("models", {})
     if not models:
         return None
     # Pick the model with the most output tokens (skip routing models).
     best_model = max(models, key=lambda m: models[m].get("tokens", {}).get("candidates", 0))
     tokens = models[best_model].get("tokens", {})
-    return {
+    result = {
         "model": best_model,
         "input_tokens": tokens.get("input", 0),
         "output_tokens": tokens.get("candidates", 0),
     }
+    session_id = data.get("session_id")
+    if session_id:
+        result["session_id"] = session_id
+    return result
 
 
 def _format_metadata(stats: dict | None, fallback_from: str | None, skipped_files: int = 0) -> str | None:
@@ -67,6 +71,8 @@ def _format_metadata(stats: dict | None, fallback_from: str | None, skipped_file
         model_line += f" (fallback from {fallback_from})"
     token_line = f"Tokens: {stats['input_tokens']} input / {stats['output_tokens']} output"
     lines = ["---", model_line, token_line]
+    if stats.get("session_id"):
+        lines.append(f"Session ID: {stats['session_id']}")
     if skipped_files > 0:
         lines.append(f"Skipped: {skipped_files} binary/junk files")
     return "\n".join(lines)
