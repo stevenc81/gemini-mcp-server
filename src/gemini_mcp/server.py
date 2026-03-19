@@ -6,7 +6,7 @@ from gemini_mcp.files import resolve_files, read_files_as_context
 from gemini_mcp.gemini import run_gemini
 
 MODEL_FALLBACK_CHAIN = [
-    "gemini-3-pro-preview",
+    "gemini-3.1-pro-preview",
     "gemini-3-flash-preview",
     "gemini-2.5-pro",
     "gemini-2.5-flash",
@@ -36,7 +36,7 @@ async def gemini_query(
     File contents are loaded server-side and piped to Gemini via stdin,
     so they don't consume Claude's context window.
 
-    Defaults to gemini-3-pro-preview, falling back to gemini-3-flash-preview,
+    Defaults to gemini-3.1-pro-preview, falling back to gemini-3-flash-preview,
     gemini-2.5-pro, then gemini-2.5-flash if a model is unavailable.
 
     Args:

@@ -107,6 +107,8 @@ async def _call_gemini(
             timeout=timeout,
         )
     except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
         return False, f"Error: gemini CLI timed out after {timeout}s", None
     except OSError as e:
         return False, f"Error: failed to run gemini CLI: {e}", None

@@ -83,7 +83,7 @@ Once registered, Claude Code can call the `gemini_query` tool:
 
 When no model is specified, the server tries these in order until one succeeds:
 
-1. `gemini-3-pro-preview`
+1. `gemini-3.1-pro-preview`
 2. `gemini-3-flash-preview`
 3. `gemini-2.5-pro`
 4. `gemini-2.5-flash`
