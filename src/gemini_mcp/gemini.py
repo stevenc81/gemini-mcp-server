@@ -29,6 +29,7 @@ _RETRIABLE_PATTERNS = [
 
 _MAX_RETRIES = 2
 _RETRY_DELAY_SECS = 3
+_STREAMING_TIMEOUT = 90  # seconds between output lines once response streaming starts
 
 
 def _should_fallback(error_msg: str) -> bool:
@@ -44,17 +45,28 @@ def _should_fallback(error_msg: str) -> bool:
 
 
 def _extract_stats(data: dict) -> dict | None:
-    """Extract model, token info, and session ID from CLI JSON."""
+    """Extract model, token info, and session ID from CLI JSON.
+
+    Handles both ``-o json`` (nested ``tokens`` dict with ``candidates``)
+    and ``-o stream-json`` (flat ``input_tokens``/``output_tokens``).
+    """
     models = data.get("stats", {}).get("models", {})
     if not models:
         return None
-    # Pick the model with the most output tokens (skip routing models).
-    best_model = max(models, key=lambda m: models[m].get("tokens", {}).get("candidates", 0))
-    tokens = models[best_model].get("tokens", {})
+
+    def _out(m: dict) -> int:
+        t = m.get("tokens")
+        return t.get("candidates", 0) if t else m.get("output_tokens", 0)
+
+    def _inp(m: dict) -> int:
+        t = m.get("tokens")
+        return t.get("input", 0) if t else m.get("input_tokens", 0)
+
+    best_model = max(models, key=lambda name: _out(models[name]))
     result = {
         "model": best_model,
-        "input_tokens": tokens.get("input", 0),
-        "output_tokens": tokens.get("candidates", 0),
+        "input_tokens": _inp(models[best_model]),
+        "output_tokens": _out(models[best_model]),
     }
     session_id = data.get("session_id")
     if session_id:
@@ -86,8 +98,18 @@ async def _call_gemini(
     timeout: int,
     session_id: str | None = None,
 ) -> tuple[bool, str, dict | None]:
-    """Run Gemini CLI once. Returns (success, result_text, stats_or_none)."""
-    cmd = [gemini_path, "-p", prompt, "-o", "json"]
+    """Run Gemini CLI once using ``stream-json`` for activity-based timeout.
+
+    Uses a two-phase timeout strategy:
+
+    1. **Thinking phase** (before first response delta): only the hard
+       wall-clock ``timeout`` applies.  Models like gemini-3.1-pro can
+       think for several minutes before producing output.
+    2. **Streaming phase** (after first delta): ``_STREAMING_TIMEOUT``
+       (90 s) between output lines catches stalled connections without
+       killing actively-streaming responses.
+    """
+    cmd = [gemini_path, "-p", prompt, "-o", "stream-json"]
     if model:
         cmd.extend(["-m", model])
     if session_id:
@@ -102,36 +124,119 @@ async def _call_gemini(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(input=stdin_data),
-            timeout=timeout,
-        )
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        return False, f"Error: gemini CLI timed out after {timeout}s", None
     except OSError as e:
         return False, f"Error: failed to run gemini CLI: {e}", None
 
-    if proc.returncode != 0:
-        error_msg = stderr.decode().strip() if stderr else "unknown error"
-        return False, f"Error: gemini CLI exited with code {proc.returncode}: {error_msg}", None
+    # Write context via stdin, then close so the CLI knows input is complete.
+    if stdin_data and proc.stdin:
+        try:
+            proc.stdin.write(stdin_data)
+            await proc.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass  # process may have exited early; we'll catch via returncode
+        finally:
+            proc.stdin.close()
+            await proc.stdin.wait_closed()
 
-    stdout_text = stdout.decode().strip()
-    try:
-        data = json.loads(stdout_text)
-        return True, data.get("response", stdout_text), _extract_stats(data)
-    except json.JSONDecodeError:
-        for line in reversed(stdout_text.splitlines()):
-            line = line.strip()
+    response_chunks: list[str] = []
+    result_data: dict | None = None
+    init_session_id: str | None = None
+    stderr_buf = bytearray()
+    start_time = asyncio.get_running_loop().time()
+    killed_for_inactivity = False
+    killed_for_capacity = False
+
+    async def _read_stdout():
+        nonlocal result_data, init_session_id, killed_for_inactivity
+        got_response = False
+        while True:
+            try:
+                # Two-phase timeout:
+                # - Before first response delta: use the full hard timeout
+                #   (model may be "thinking" for minutes with no output)
+                # - After first delta: use _STREAMING_TIMEOUT to catch stalls
+                read_timeout = _STREAMING_TIMEOUT if got_response else timeout
+                line = await asyncio.wait_for(
+                    proc.stdout.readline(),
+                    timeout=read_timeout,
+                )
+            except asyncio.TimeoutError:
+                killed_for_inactivity = True
+                proc.kill()
+                return
             if not line:
+                break
+            text = line.decode().strip()
+            if not text:
                 continue
             try:
-                data = json.loads(line)
-                return True, data.get("response", stdout_text), _extract_stats(data)
-            except (json.JSONDecodeError, AttributeError):
-                continue
-        return True, stdout_text, None
+                event = json.loads(text)
+            except json.JSONDecodeError:
+                continue  # non-JSON lines (CLI warnings, retry messages)
+            etype = event.get("type")
+            if etype == "init":
+                init_session_id = event.get("session_id")
+            elif etype == "message" and event.get("role") == "assistant":
+                got_response = True
+                content = event.get("content", "")
+                if content:
+                    response_chunks.append(content)
+            elif etype == "result":
+                result_data = event
+
+    async def _read_stderr():
+        nonlocal killed_for_capacity
+        while True:
+            chunk = await proc.stderr.read(8192)
+            if not chunk:
+                break
+            stderr_buf.extend(chunk)
+            if not killed_for_capacity and b"MODEL_CAPACITY_EXHAUSTED" in stderr_buf:
+                killed_for_capacity = True
+                proc.kill()
+                return
+
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(_read_stdout(), _read_stderr()),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        if proc.returncode is None:
+            proc.kill()
+
+    rc = await proc.wait()
+    elapsed = int(asyncio.get_running_loop().time() - start_time)
+
+    stderr_msg = stderr_buf.decode().strip() if stderr_buf else ""
+
+    if killed_for_capacity:
+        return False, f"Error: model capacity exhausted (detected after {elapsed}s)", None
+
+    if killed_for_inactivity:
+        detail = f"Error: gemini CLI stalled (no output, killed after {elapsed}s)"
+        if stderr_msg:
+            detail += f"\nStderr:\n{stderr_msg[-2000:]}"
+        return False, detail, None
+
+    if rc < 0:
+        detail = f"Error: gemini CLI was killed (signal {-rc}) after {elapsed}s"
+        if stderr_msg:
+            detail += f"\nStderr:\n{stderr_msg[-2000:]}"
+        return False, detail, None
+
+    if rc != 0:
+        detail = stderr_msg[-2000:] if stderr_msg else "unknown error"
+        return False, f"Error: gemini CLI exited with code {rc}: {detail}", None
+
+    response_text = "".join(response_chunks)
+    stats = None
+    if result_data:
+        stats = _extract_stats({
+            "stats": result_data.get("stats", {}),
+            "session_id": init_session_id,
+        })
+    return True, response_text, stats
 
 
 async def _call_with_retries(
@@ -168,7 +273,7 @@ async def run_gemini(
     context: str = "",
     model: str | None = None,
     models: list[str] | None = None,
-    timeout: int = 120,
+    timeout: int = 300,
     skipped_files: int = 0,
     session_id: str | None = None,
 ) -> str:
@@ -184,12 +289,17 @@ async def run_gemini(
     If a single model is provided via `model`, it is used directly with
     no fallback (but transient errors are still retried).
 
+    Uses ``stream-json`` output with a two-phase timeout: during model
+    thinking (before first response token), only the hard ``timeout``
+    applies; once streaming starts, a shorter per-line timeout catches
+    stalled connections without killing actively-streaming responses.
+
     Args:
         prompt: The instruction/question for Gemini.
         context: Optional file context to pipe via stdin.
         model: Single model to use (no fallback).
         models: Ordered list of models to try. First success wins.
-        timeout: Timeout in seconds. Default 120.
+        timeout: Hard wall-clock timeout in seconds. Default 300.
         session_id: Optional session ID to resume a previous conversation.
     """
     gemini_path = shutil.which("gemini")
